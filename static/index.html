@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Monitoreo inteligente de precios de laptops en Amazon con alertas automáticas.">
+    <title>Amazon Price Tracker — Monitoreo de Precios</title>
+
+    <!-- Fonts: Space Grotesk (display) + DM Sans (body) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <!-- ═══════════════════════════════════════ -->
+    <!--  NOISE TEXTURE OVERLAY                 -->
+    <!-- ═══════════════════════════════════════ -->
+    <div class="noise-overlay" aria-hidden="true"></div>
+
+    <!-- ═══════════════════════════════════════ -->
+    <!--  AMBIENT GLOW                          -->
+    <!-- ═══════════════════════════════════════ -->
+    <div class="ambient-glow ambient-glow--1" aria-hidden="true"></div>
+    <div class="ambient-glow ambient-glow--2" aria-hidden="true"></div>
+
+    <!-- ═══════════════════════════════════════ -->
+    <!--  MAIN CONTAINER                        -->
+    <!-- ═══════════════════════════════════════ -->
+    <main class="container">
+
+        <!-- ── HEADER ── -->
+        <header class="header" id="header">
+            <div class="header__badge">PRICE TRACKER</div>
+            <h1 class="header__title">
+                Monitoreo de Precios
+                <span class="header__title-accent">Amazon</span>
+            </h1>
+            <p class="header__subtitle">
+                Busca laptops, compara precios en tiempo real y recibe alertas
+                cuando el precio baje de tu objetivo.
+            </p>
+        </header>
+
+        <!-- ── SEARCH CONTROLS ── -->
+        <section class="controls" id="controls">
+            <div class="controls__inputs">
+                <div class="input-group input-group--query">
+                    <label class="input-group__label" for="search-query">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                        Producto
+                    </label>
+                    <input
+                        type="text"
+                        id="search-query"
+                        class="input-group__input"
+                        value="Lenovo ThinkBook 16"
+                        placeholder="Ej: MacBook Air M3, Dell XPS 15..."
+                        autocomplete="off"
+                    >
+                </div>
+                <div class="input-group input-group--threshold">
+                    <label class="input-group__label" for="price-threshold">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                        Alerta USD
+                    </label>
+                    <input
+                        type="number"
+                        id="price-threshold"
+                        class="input-group__input"
+                        value="750"
+                        min="50"
+                        max="10000"
+                        step="50"
+                    >
+                </div>
+            </div>
+            <button class="btn-search" id="search-btn" type="button">
+                <svg class="btn-search__icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                <span class="btn-search__text">Buscar en Amazon</span>
+                <span class="btn-search__loading" aria-hidden="true">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+                </span>
+            </button>
+        </section>
+
+        <!-- ── STATS CARDS ── -->
+        <section class="stats" id="stats">
+            <div class="stat-card" id="stat-count">
+                <div class="stat-card__icon stat-card__icon--blue">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7.5 4.27 9 5.15"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>
+                </div>
+                <div class="stat-card__content">
+                    <span class="stat-card__label">Productos</span>
+                    <span class="stat-card__value" id="stat-count-value">—</span>
+                </div>
+            </div>
+            <div class="stat-card" id="stat-alert">
+                <div class="stat-card__icon stat-card__icon--amber">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+                </div>
+                <div class="stat-card__content">
+                    <span class="stat-card__label">Precio Alerta</span>
+                    <span class="stat-card__value" id="stat-alert-value">$750</span>
+                </div>
+            </div>
+            <div class="stat-card" id="stat-range">
+                <div class="stat-card__icon stat-card__icon--emerald">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 12-4-4v3H3v2h15v3z"/></svg>
+                </div>
+                <div class="stat-card__content">
+                    <span class="stat-card__label">Rango Precios</span>
+                    <span class="stat-card__value" id="stat-range-value">—</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- ── STATUS BAR ── -->
+        <div class="status-bar" id="status-bar" hidden>
+            <svg class="status-bar__icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></svg>
+            <span class="status-bar__text" id="status-text"></span>
+        </div>
+
+        <!-- ── RESULTS ── -->
+        <section class="results" id="results" hidden>
+            <div class="results__header">
+                <h2 class="results__title">Resultados</h2>
+                <span class="results__count" id="results-count"></span>
+            </div>
+            <div class="results__grid" id="results-grid">
+                <!-- Cards rendered via JS -->
+            </div>
+        </section>
+
+        <!-- ── EMPTY STATE ── -->
+        <section class="empty-state" id="empty-state">
+            <div class="empty-state__icon">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+            </div>
+            <p class="empty-state__text">Ingresa un producto y presiona <strong>Buscar</strong> para comenzar</p>
+        </section>
+
+        <!-- ── FOOTER ── -->
+        <footer class="footer">
+            <p>Desarrollado con FastAPI + Playwright — Datos obtenidos de Amazon.com</p>
+        </footer>
+    </main>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

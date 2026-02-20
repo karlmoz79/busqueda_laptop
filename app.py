@@ -1,71 +1,147 @@
+"""
+Amazon Price Tracker — FastAPI Backend
+Expone una API REST para el scraper y sirve el frontend estático.
+"""
+
 import asyncio
-import gradio as gr
-from scraper import AmazonScraper
+import logging
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
 from notifier import EmailNotifier
+from scraper import AmazonScraper
 
-def run_tracking():
-    # Creamos un loop asincrónico para Gradio
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+# ── Pydantic Schemas ──
+
+class SearchRequest(BaseModel):
+    query: str = "Lenovo ThinkBook 16"
+    price_threshold: float = 750.0
+
+
+class ProductResult(BaseModel):
+    title: str
+    price_usd: float | None
+    url: str
+    ships_to_colombia: bool
+
+
+class SearchResponse(BaseModel):
+    status: str
+    count: int
+    price_min: float | None
+    price_max: float | None
+    alerts_sent: int
+    products: list[ProductResult]
+
+
+# ── App ──
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info("Amazon Price Tracker API iniciada")
+    yield
+    logger.info("API cerrada")
+
+
+app = FastAPI(
+    title="Amazon Price Tracker",
+    version="2.0.0",
+    lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Servir archivos estáticos
+static_dir = Path(__file__).parent / "static"
+static_dir.mkdir(exist_ok=True)
+app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+
+# ── Routes ──
+
+@app.get("/", response_class=HTMLResponse)
+async def serve_frontend():
+    """Sirve el frontend HTML."""
+    index_path = static_dir / "index.html"
+    if index_path.exists():
+        return FileResponse(str(index_path), media_type="text/html")
+    return HTMLResponse("<h1>Frontend no encontrado</h1>", status_code=404)
+
+
+@app.post("/api/search", response_model=SearchResponse)
+async def search_products(req: SearchRequest):
+    """Ejecuta el scraper y retorna productos encontrados."""
     scraper = AmazonScraper()
-    resultados = loop.run_until_complete(scraper.scrape())
-    
-    if not resultados:
-        return "No se encontraron resultados o Amazon bloqueó la solicitud.", []
-    
-    # Preparar datos para la tabla y verificar alertas
-    notifier = EmailNotifier()
-    data = []
-    alertas_enviadas = 0
-    alerta_thresh = 750.00
-    
-    for r in resultados:
-        envio_col = "Sí" if r.ships_to_colombia else "No / N/D"
-        # Convertir a texto para la UI
-        precio_texto = f"${r.price_usd:,.2f}" if r.price_usd else "N/D"
-        
-        # Enviar alerta si aplica
-        if r.price_usd and notifier.target_price_met(r.price_usd, alerta_thresh):
-            enviado = notifier.send_alert(r)
-            if enviado:
-                alertas_enviadas += 1
-                
-        # Link en Markdown para la UI
-        link_md = f"[Ver en Amazon]({r.url})"
-        
-        data.append([r.title, precio_texto, envio_col, link_md])
-        
-    status = f"Búsqueda exitosa. Se extrajeron {len(resultados)} productos."
-    if alertas_enviadas > 0:
-        status += f"\n¡Se enviaron {alertas_enviadas} alertas al email por precios menores a ${alerta_thresh}!"
-        
-    return status, data
 
-with gr.Blocks(theme=gr.themes.Soft(primary_hue="blue")) as demo:
-    gr.Markdown("# 🛒 Rastreador de Precios Amazon")
-    gr.Markdown("### Objetivo: Lenovo ThinkBook 16")
-    
-    with gr.Row():
-        buscar_btn = gr.Button("🔍 Buscar Laptop Ahora", variant="primary")
-        
-    status_box = gr.Textbox(label="Estado de la Búsqueda", interactive=False)
-    
-    resultados_tb = gr.Dataframe(
-        headers=["Título", "Precio (USD)", "Envío a Colombia", "Enlace"],
-        datatype=["str", "str", "str", "markdown"],
-        label="Resultados de Amazon",
-        wrap=True
+    if req.query.strip():
+        scraper.search_query = req.query.strip()
+
+    # Ejecutar scraper en un hilo separado para no bloquear el event loop
+    resultados = await scraper.scrape()
+
+    if not resultados:
+        return SearchResponse(
+            status="No se encontraron resultados. Amazon pudo haber bloqueado la solicitud.",
+            count=0,
+            price_min=None,
+            price_max=None,
+            alerts_sent=0,
+            products=[],
+        )
+
+    # Procesar resultados
+    notifier = EmailNotifier()
+    alerts_sent = 0
+    price_min = float("inf")
+    price_max = 0.0
+    products: list[ProductResult] = []
+
+    for r in resultados:
+        if r.price_usd and r.price_usd > 0:
+            price_min = min(price_min, r.price_usd)
+            price_max = max(price_max, r.price_usd)
+
+        if r.price_usd and notifier.target_price_met(r.price_usd, req.price_threshold):
+            if notifier.send_alert(r):
+                alerts_sent += 1
+
+        products.append(
+            ProductResult(
+                title=r.title,
+                price_usd=r.price_usd,
+                url=r.url,
+                ships_to_colombia=r.ships_to_colombia,
+            )
+        )
+
+    return SearchResponse(
+        status=f"Busqueda completada — {len(products)} productos encontrados.",
+        count=len(products),
+        price_min=price_min if price_min != float("inf") else None,
+        price_max=price_max if price_max > 0 else None,
+        alerts_sent=alerts_sent,
+        products=products,
     )
-    
-    buscar_btn.click(
-        fn=run_tracking,
-        inputs=[],
-        outputs=[status_box, resultados_tb]
-    )
+
 
 if __name__ == "__main__":
-    demo.launch(server_name="127.0.0.1", server_port=7860)
+    import uvicorn
+
+    uvicorn.run("app:app", host="127.0.0.1", port=7860, reload=True)

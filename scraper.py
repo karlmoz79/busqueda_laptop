@@ -1,10 +1,10 @@
 import asyncio
 import logging
+import random
 from typing import List, Optional
 from urllib.parse import quote_plus
 from playwright.async_api import async_playwright
 from playwright_stealth.stealth import Stealth
-from bs4 import BeautifulSoup
 from pydantic import BaseModel
 
 # Configuración de logging basado en mejores prácticas de Python Pro
@@ -18,23 +18,95 @@ class ProductData(BaseModel):
     ships_to_colombia: bool
 
 class AmazonScraper:
-    def __init__(self):
-        # Query de búsqueda (Reducido para encontrar más coincidencias en Amazon)
+    def __init__(self, headless: bool = False):
+        # Query de búsqueda
         self.search_query = "Lenovo ThinkBook 16"
         self.base_url = "https://www.amazon.com"
+        self.max_retries = 3
+        self.headless = headless
         
+    async def _human_delay(self, min_sec: float = 1.0, max_sec: float = 3.5):
+        """Simula un retraso humano aleatorio."""
+        await asyncio.sleep(random.uniform(min_sec, max_sec))
+    
+    async def _smooth_scroll(self, page, steps: int = 3):
+        """Simula un scroll humano gradual en lugar de un salto abrupto."""
+        for i in range(steps):
+            scroll_amount = random.randint(200, 500)
+            await page.evaluate(f"window.scrollBy(0, {scroll_amount})")
+            await asyncio.sleep(random.uniform(0.3, 0.8))
+    
+    async def _simulate_mouse_movement(self, page):
+        """Mueve el mouse de forma aleatoria como un humano."""
+        for _ in range(random.randint(2, 5)):
+            x = random.randint(100, 1200)
+            y = random.randint(100, 600)
+            await page.mouse.move(x, y)
+            await asyncio.sleep(random.uniform(0.1, 0.4))
+
+    def _is_blocked(self, title: str, page_content: str) -> bool:
+        """Detecta si Amazon nos bloqueó."""
+        blocked_signals = [
+            "sorry" in title.lower(),
+            "captcha" in title.lower(),
+            "robot" in title.lower(),
+            "something went wrong" in page_content.lower()[:2000],
+            "validateCaptcha" in page_content[:3000],
+            "Type the characters you see" in page_content[:3000],
+        ]
+        return any(blocked_signals)
+
     async def scrape(self) -> List[ProductData]:
         """Ejecuta el scraper asincrónico para buscar el producto en Amazon."""
+        
+        for attempt in range(1, self.max_retries + 1):
+            logger.info(f"Intento {attempt} de {self.max_retries}...")
+            
+            result = await self._attempt_scrape()
+            
+            if result is not None:
+                return result
+            
+            if attempt < self.max_retries:
+                wait_time = random.uniform(5, 10) * attempt
+                logger.info(f"Esperando {wait_time:.1f}s antes de reintentar...")
+                await asyncio.sleep(wait_time)
+        
+        logger.error("Se agotaron todos los reintentos.")
+        return []
+
+    async def _attempt_scrape(self) -> Optional[List[ProductData]]:
+        """Un intento individual de scraping. Retorna None si fue bloqueado."""
         async with async_playwright() as p:
-            # Lanzamos Chromium. Al cambiar headless a False Amazon confía más en nosotros.
-            browser = await p.chromium.launch(headless=False, args=["--disable-blink-features=AutomationControlled"])
+            # User agents actualizados y realistas (Chrome 131 en Linux)
+            user_agents = [
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            ]
+            
+            browser = await p.chromium.launch(
+                headless=self.headless,
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-infobars",
+                    "--window-size=1920,1080",
+                ]
+            )
+
             context = await browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                user_agent=random.choice(user_agents),
                 viewport={"width": 1920, "height": 1080},
-                locale="en-US"
+                locale="en-US",
+                timezone_id="America/New_York",
+                # Simular permisos reales del navegador
+                permissions=["geolocation"],
+                java_script_enabled=True,
             )
             
-            # Establecer moneda en USD (United States Dollar) para evitar precios locales como COP
+            # Establecer moneda en USD
             await context.add_cookies([{
                 "name": "i18n-prefs",
                 "value": "USD",
@@ -49,37 +121,75 @@ class AmazonScraper:
             await stealth.apply_stealth_async(page)
             
             try:
-                search_url = f"{self.base_url}/s?k={quote_plus(self.search_query)}"
-                logger.info(f"Navegando a {search_url}")
+                # === PASO 1: Ir primero a la homepage (como un humano) ===
+                logger.info("Navegando a la homepage de Amazon...")
+                await page.goto(self.base_url, wait_until="domcontentloaded", timeout=60000)
+                await self._human_delay(2.0, 4.0)
+                await self._simulate_mouse_movement(page)
                 
-                # Vamos directamente a la web sin timeouts abusivos
-                await page.goto(search_url, wait_until="domcontentloaded", timeout=60000)
-                
-                # Simulamos un scroll aleatorio como un humano (espera)
-                await page.evaluate("window.scrollBy(0, document.body.scrollHeight / 2)")
-                await asyncio.sleep(2)
-                
-                # Chequeo de captcha
+                # Verificar si la homepage ya nos bloqueó
                 title = await page.title()
-                if "captcha" in title.lower() or await page.locator("form[action='/errors/validateCaptcha']").count() > 0:
-                    logger.warning("Amazon solicitó validación de Captcha.")
-                    return []
+                content = await page.content()
+                if self._is_blocked(title, content):
+                    logger.warning("Bloqueado en la homepage. Abortando intento.")
+                    await browser.close()
+                    return None
                 
-                # Esperar a que carguen los resultados o algún elemento del DOM
+                # === PASO 2: Usar la barra de búsqueda como un humano ===
+                logger.info(f"Buscando: {self.search_query}")
+                search_box = page.locator("#twotabsearchtextbox")
+                
+                if await search_box.count() > 0:
+                    await search_box.click()
+                    await self._human_delay(0.5, 1.0)
+                    
+                    # Escribir carácter por carácter (simula tipeo humano)
+                    for char in self.search_query:
+                        await search_box.press(char)
+                        await asyncio.sleep(random.uniform(0.05, 0.15))
+                    
+                    await self._human_delay(0.5, 1.5)
+                    await page.keyboard.press("Enter")
+                else:
+                    # Fallback: navegar directamente a la URL de búsqueda
+                    logger.info("No se encontró barra de búsqueda, usando URL directa.")
+                    search_url = f"{self.base_url}/s?k={quote_plus(self.search_query)}"
+                    await page.goto(search_url, wait_until="domcontentloaded", timeout=60000)
+                
+                await self._human_delay(2.0, 4.0)
+                await self._smooth_scroll(page)
+                
+                # === PASO 3: Verificar bloqueo en resultados ===
+                title = await page.title()
+                content = await page.content()
+                if self._is_blocked(title, content):
+                    logger.warning("Bloqueado en la página de resultados.")
+                    await page.screenshot(path="debug_amazon.png")
+                    await browser.close()
+                    return None
+                
+                # Esperar a que carguen los resultados
                 try:
                     await page.wait_for_selector("div[data-component-type='s-search-result']", timeout=15000)
                 except Exception:
-                    logger.info("No se encontraron resultados del grid, intentando modo alternativo. Guardando debug...")
+                    logger.info("No se encontraron resultados del grid. Guardando debug...")
                     await page.screenshot(path="debug_amazon.png")
                     with open("debug_amazon.html", "w", encoding="utf-8") as f:
                         f.write(await page.content())
+                    await browser.close()
+                    return []
+                
+                # === PASO 4: Extraer productos ===
+                await self._smooth_scroll(page, steps=4)
+                await self._human_delay(1.0, 2.0)
                 
                 products = []
                 cajas_resultados = await page.locator("div[data-component-type='s-search-result']").all()
+                logger.info(f"Se encontraron {len(cajas_resultados)} resultados en la página.")
+                
                 for index, item in enumerate(cajas_resultados[:15]): 
                     try:
                         title_str = ""
-                        # Buscar el elemento de título a-text-normal standard o  h2
                         title_locators = [
                             item.locator("h2 span").first,
                             item.locator("h2").first,
@@ -135,7 +245,6 @@ class AmazonScraper:
                             products.append(ProductData(
                                 title=title_str,
                                 price_usd=price,
-                                seller="Amazon",
                                 url=url,
                                 ships_to_colombia=ships_to_colombia
                             ))

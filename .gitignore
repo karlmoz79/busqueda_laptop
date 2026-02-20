@@ -11,3 +11,22 @@ wheels/
 
 # Secrets
 .env
+
+# Logs
+tracker.log
+*.log
+
+# Debug files
+debug_amazon.html
+debug_amazon.png
+
+# Local automation scripts
+run_tracker.sh
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
