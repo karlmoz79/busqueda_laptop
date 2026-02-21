@@ -22,6 +22,8 @@ debug_amazon.png
 
 # Local automation scripts
 run_tracker.sh
+run_tracker_laptop.sh
+tracker_cron.log
 
 # IDE
 .vscode/

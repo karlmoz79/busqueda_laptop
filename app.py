@@ -118,10 +118,6 @@ async def search_products(req: SearchRequest):
             price_min = min(price_min, r.price_usd)
             price_max = max(price_max, r.price_usd)
 
-        if r.price_usd and notifier.target_price_met(r.price_usd, req.price_threshold):
-            if notifier.send_alert(r):
-                alerts_sent += 1
-
         products.append(
             ProductResult(
                 title=r.title,
@@ -130,6 +126,11 @@ async def search_products(req: SearchRequest):
                 ships_to_colombia=r.ships_to_colombia,
             )
         )
+
+    # Enviar un único correo con todas las alertas consolidadas
+    if notifier.send_consolidated_alert(resultados, req.price_threshold):
+        deals_count = sum(1 for p in resultados if p.price_usd and notifier.target_price_met(p.price_usd, req.price_threshold))
+        alerts_sent = deals_count
 
     return SearchResponse(
         status=f"Busqueda completada — {len(products)} productos encontrados.",

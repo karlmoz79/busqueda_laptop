@@ -190,19 +190,32 @@ class AmazonScraper:
                 for index, item in enumerate(cajas_resultados[:15]): 
                     try:
                         title_str = ""
-                        title_locators = [
-                            item.locator("h2 span").first,
-                            item.locator("h2").first,
-                            item.locator("span.a-size-medium.a-color-base.a-text-normal").first
-                        ]
+                        # Estrategia primaria: extraer el texto completo de la imagen del producto
+                        # Amazon siempre incluye la descripción completa en el 'alt' de su clase s-image
+                        img_loc = item.locator("img.s-image").first
+                        if await img_loc.count() > 0:
+                            title_str = await img_loc.get_attribute("alt") or ""
                         
-                        for loc in title_locators:
-                            if await loc.count() > 0:
-                                title_str = await loc.inner_text()
-                                if not title_str.strip():
-                                    title_str = await loc.get_attribute("aria-label") or ""
-                                if title_str.strip():
-                                    break
+                        # Fallback a los h2/span si la imagen no da un título completo (> 15 chars)
+                        if not title_str or len(title_str.strip()) < 15:
+                            title_locators = [
+                                item.locator("h2 a span").first,
+                                item.locator("span.a-size-medium.a-color-base.a-text-normal").first,
+                                item.locator("span.a-size-base-plus.a-color-base.a-text-normal").first,
+                                item.locator("h2").first
+                            ]
+                            
+                            for loc in title_locators:
+                                if await loc.count() > 0:
+                                    temp_str = await loc.inner_text()
+                                    if not temp_str.strip():
+                                        temp_str = await loc.get_attribute("aria-label") or ""
+                                    
+                                    # Si encontramos una mejor descripción, la tomamos
+                                    if temp_str and len(temp_str.strip()) > len(title_str.strip()):
+                                        title_str = temp_str.strip()
+                                        if len(title_str) > 20:
+                                            break
                         
                         title_str = title_str.strip()
                         if not title_str:
